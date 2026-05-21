@@ -1,0 +1,30 @@
+model:
+  backend: ollama          # ollama | llamacpp | openai
+  base_url: http://localhost:11434/v1
+  model_name: gemma4:e2b
+  api_key: null            # required for openai; arbitrary string for ollama/llamacpp
+  timeout: 60              # seconds
+  temperature: 0.3         # null = model default; lower (0.0–0.3) improves tool calling reliability
+  max_tokens: null         # null = model default; set to cap response length
+  seed: null               # null = random; set to an integer for reproducible outputs
+  tool_mode: api           # api    — native OpenAI tools= param; model returns structured tool_calls
+                           # prompt — tools injected as JSON in system prompt; model returns JSON array
+                           # lfm    — tools injected as list in system prompt; model returns <|tool_call_start|> tokens (LFM2.5)
+
+agent:
+  max_iterations: 10       # hard cap on think->act cycles per run
+  system_prompt: "You are a helpful assistant."
+  confirm_tools: false    # set true to require human approval before each tool call
+
+toolrag:
+  enabled: true
+  top_k: 5
+  backend: tfidf           # tfidf | sentence-transformers
+  st_model: null           # e.g. "all-MiniLM-L6-v2" if backend is sentence-transformers
+  reselect_window: 3       # number of recent messages used as retrieval query each iteration
+  reselect_roles:          # which message roles to include in the query
+    - user
+    - assistant
+
+scratchpad:
+  enabled: true

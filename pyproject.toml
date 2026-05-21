@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uniagent"
+version = "0.1.0"
+description = "Minimal tool-using agent framework."
+requires-python = ">=3.11"
+dependencies = [
+  "openai",
+  "pyyaml",
+  "numpy",
+]
+
+[project.optional-dependencies]
+semantic = [
+  "sentence-transformers",
+]
+tui = [
+  "textual",
+]
+speech = [
+  "pywhispercpp",
+  "silero-vad",
+  "piper-tts",
+  "sounddevice",
+  "numpy",
+]
+
+[tool.setuptools.packages.find]
+include = ["uniagent*"]
+
+[dependency-groups]
+dev = ["ruff", "pyright"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"

@@ -1,0 +1,214 @@
+import threading
+from collections.abc import Callable
+from pprint import pformat
+from typing import Any
+
+from textual import work
+from textual.app import App, ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Header, Input, Log, Static
+
+CONFIRM_TIMEOUT_S = 120.0
+
+
+class DebugApp(App):
+    BINDINGS = [("q", "quit", "Quit")]
+    CSS = """
+    #main { height: 1fr; }
+    #history { width: 1fr; height: 1fr; }
+    #right {
+        width: 36;
+        height: 1fr;
+        border-left: solid $primary;
+    }
+    #diagnostics {
+        height: 1fr;
+        padding: 0 1;
+        border-bottom: solid $primary-darken-1;
+    }
+    #scratchpad {
+        height: auto;
+        min-height: 4;
+        padding: 0 1;
+    }
+    #input { dock: bottom; }
+    """
+
+    def __init__(self, agent: Any):
+        super().__init__()
+        self._agent = agent
+        self._session_tokens = 0
+        self._session_latency_ms = 0.0
+        self._session_tool_calls = 0
+        self._confirm_pending = False
+        self._confirm_event = threading.Event()
+        self._confirm_response = ""
+        self._confirm_timeout_s = CONFIRM_TIMEOUT_S
+        self._streaming_turn = False
+        self._last_live_tps = 0.0
+        self._last_stats: dict | None = None
+
+    def on_mount(self) -> None:
+        self._refresh_diagnostics()
+
+    def on_unmount(self) -> None:
+        self._resolve_confirmation("no: TUI closed")
+
+    def action_quit(self) -> None:
+        self._resolve_confirmation("no: TUI closed")
+        self.exit()
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with Horizontal(id="main"):
+            yield Log(id="history", auto_scroll=True)
+            with Vertical(id="right"):
+                yield Static("", id="diagnostics")
+                yield Static("Scratchpad\n(empty)", id="scratchpad")
+        yield Input(placeholder="Message...", id="input")
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        message = event.value.strip()
+        event.input.clear()
+        if not message:
+            return
+        if self._confirm_pending:
+            self._resolve_confirmation(message)
+            return
+        self._log(f"[user] {message}")
+        self._run_agent(message)
+
+    @work(thread=True)
+    def _run_agent(self, message: str) -> None:
+        confirm_fn: Callable[[str], str] | None = None
+        if self._agent.config["agent"]["confirm_tools"]:
+            confirm_fn = self._make_confirm_fn()
+        try:
+            self._agent.run(message, on_event=self._handle_event, confirm_fn=confirm_fn)
+        except Exception as error:
+            self.call_from_thread(self._log, f"[error] {error}")
+
+    def _make_confirm_fn(self) -> Callable[[str], str]:
+        def tui_confirm_fn(question: str) -> str:
+            self._confirm_event.clear()
+            try:
+                self.call_from_thread(self._begin_confirmation, question)
+            except RuntimeError:
+                return "no: TUI unavailable"
+            if self._confirm_event.wait(timeout=self._confirm_timeout_s):
+                return self._confirm_response
+            self._resolve_confirmation("no: confirmation timed out")
+            try:
+                self.call_from_thread(
+                    self._log,
+                    "[assistant] Confirmation timed out; denying tool call.",
+                )
+            except RuntimeError:
+                pass
+            return self._confirm_response
+
+        return tui_confirm_fn
+
+    def _begin_confirmation(self, question: str) -> None:
+        self._confirm_response = "no: confirmation cancelled"
+        self._confirm_pending = True
+        self._log(f"[assistant] {question} (approve/deny, timeout {self._confirm_timeout_s:.0f}s)")
+
+    def _resolve_confirmation(self, response: str) -> None:
+        if not self._confirm_pending and self._confirm_event.is_set():
+            return
+        self._confirm_response = response
+        self._confirm_pending = False
+        self._confirm_event.set()
+
+    def _handle_event(self, event: dict) -> None:
+        self.call_from_thread(self._dispatch, event)
+
+    def _dispatch(self, event: dict) -> None:
+        t = event.get("type")
+        log = self.query_one("#history", Log)
+        if t == "token":
+            tok = event.get("content", "")
+            if not self._streaming_turn:
+                self._streaming_turn = True
+                log.write("[assistant] ")
+            if tok == "\n":
+                log.write("\n")
+                self._streaming_turn = False
+            else:
+                log.write(tok)
+            self._last_live_tps = event.get("tok_per_sec", 0.0)
+            self._refresh_diagnostics()
+        elif t == "tool_call":
+            self._log(f"[tool->] {event.get('name')}({pformat(event.get('args', {}))})")
+        elif t == "tool_result":
+            self._log(f"[<-tool] {event.get('name')}: {event.get('content')}")
+        elif t == "tool_validation_error":
+            self._log(f"[tool validation] {pformat(event.get('errors', []))}")
+        elif t == "scratchpad":
+            self.query_one("#scratchpad", Static).update(
+                "Scratchpad\n" + pformat(event.get("state", {}))
+            )
+        elif t == "assistant_text":
+            if not self._streaming_turn:
+                self._log(f"[assistant] {event.get('content')}")
+        elif t == "stats":
+            self._streaming_turn = False
+            self._session_tokens += event.get("completion_tokens", 0)
+            self._session_latency_ms += event.get("latency_ms", 0)
+            self._session_tool_calls = event.get("session_tool_calls", 0)
+            self._refresh_diagnostics(event)
+
+    def _refresh_diagnostics(self, stats: dict | None = None) -> None:
+        if stats is not None:
+            self._last_stats = stats
+        cfg = self._agent.config
+        m = cfg["model"]
+        stats = self._last_stats
+        avg_tps = (
+            round(self._session_tokens / self._session_latency_ms * 1000, 1)
+            if self._session_latency_ms > 0
+            else 0.0
+        )
+        lines = [
+            "Diagnostics",
+            "─" * 24,
+            f"Model:    {self._short(m['model_name'])}",
+            f"Provider: {m['backend']}",
+            f"Mode:     {m['tool_mode']}",
+            f"Prompt:   {self._short(cfg['agent']['system_prompt'], head=True)}",
+            "",
+            f"Live:     {self._last_live_tps:.1f} tok/s",
+            f"Avg:      {avg_tps:.1f} tok/s",
+            f"Tokens:   {self._session_tokens:,}",
+            f"Calls:    {self._session_tool_calls}",
+        ]
+
+        if stats:
+            lines += [
+                f"Last:     {stats.get('tok_per_sec', 0):.1f} tok/s",
+                f"History:  {stats.get('history_depth', 0)} msgs",
+                f"Iter:     {stats.get('iteration', 0)}",
+                "",
+                "Tools exposed:",
+            ]
+            for name in stats.get("active_tools", []):
+                lines.append(f"  • {name}")
+
+        self.query_one("#diagnostics", Static).update("\n".join(lines))
+
+    @staticmethod
+    def _short(text: str, head: bool = False) -> str:
+        if len(text) <= 28:
+            return text
+        return text[:25] + "..." if head else "..." + text[-25:]
+
+    def _log(self, line: str) -> None:
+        self.query_one("#history", Log).write_line(line)
+
+
+def run_tui(agent: Any) -> None:
+    DebugApp(agent).run()
+
+
+__all__ = ["run_tui"]

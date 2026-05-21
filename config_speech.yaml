@@ -1,0 +1,29 @@
+vad:
+  enabled: true
+  model: silero_v5
+  threshold: 0.5
+  silence_duration_ms: 700
+  max_recording_s: 30
+  sample_rate: 16000
+
+stt:
+  backend: whisper.cpp
+  model: tiny
+  language: null
+  models_dir: null
+
+tts:
+  backend: piper
+  model_path: null
+  voice: null
+  speaking_rate: 1.0
+
+audio:
+  input_device: null
+  output_device: null
+  output_volume: 1.0
+
+chime:
+  enabled: true
+  start: builtin
+  end: builtin
