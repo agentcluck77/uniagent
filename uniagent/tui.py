@@ -37,6 +37,7 @@ class DebugApp(App):
     def __init__(self, agent: Any):
         super().__init__()
         self._agent = agent
+        self._agent_lock = threading.Lock()
         self._session_tokens = 0
         self._session_latency_ms = 0.0
         self._session_tool_calls = 0
@@ -83,10 +84,11 @@ class DebugApp(App):
         confirm_fn: Callable[[str], str] | None = None
         if self._agent.config["agent"]["confirm_tools"]:
             confirm_fn = self._make_confirm_fn()
-        try:
-            self._agent.run(message, on_event=self._handle_event, confirm_fn=confirm_fn)
-        except Exception as error:
-            self.call_from_thread(self._log, f"[error] {error}")
+        with self._agent_lock:
+            try:
+                self._agent.run(message, on_event=self._handle_event, confirm_fn=confirm_fn)
+            except Exception as error:
+                self.call_from_thread(self._log, f"[error] {error}")
 
     def _make_confirm_fn(self) -> Callable[[str], str]:
         def tui_confirm_fn(question: str) -> str:
@@ -159,6 +161,9 @@ class DebugApp(App):
             self._session_tool_calls = event.get("session_tool_calls", 0)
             self._refresh_diagnostics(event)
 
+    def _extra_diagnostics_lines(self) -> list[str]:
+        return []
+
     def _refresh_diagnostics(self, stats: dict | None = None) -> None:
         if stats is not None:
             self._last_stats = stats
@@ -195,6 +200,7 @@ class DebugApp(App):
             for name in stats.get("active_tools", []):
                 lines.append(f"  • {name}")
 
+        lines += self._extra_diagnostics_lines()
         self.query_one("#diagnostics", Static).update("\n".join(lines))
 
     @staticmethod
@@ -207,8 +213,66 @@ class DebugApp(App):
         self.query_one("#history", Log).write_line(line)
 
 
+class SpeechDebugApp(DebugApp):
+    def __init__(self, agent: Any, pipeline: Any):
+        super().__init__(agent)
+        self._pipeline = pipeline
+        self._speech_state = "starting"
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        threading.Thread(target=self._speech_loop, daemon=True).start()
+
+    def _speech_loop(self) -> None:
+        _last_exc_str = ""
+        while True:
+            self._set_speech_state("listening")
+            try:
+                text = self._pipeline.listen()
+                _last_exc_str = ""
+            except Exception as exc:
+                exc_str = str(exc)
+                if exc_str != _last_exc_str:
+                    self.call_from_thread(self._log, f"[speech error] {exc_str}")
+                    _last_exc_str = exc_str
+                threading.Event().wait(2.0)
+                continue
+            if not text:
+                continue
+            self.call_from_thread(self._log, f"[user] {text}")
+            self._set_speech_state("agent running")
+            tts_on_event = self._pipeline.make_on_event()
+
+            def combined_on_event(event: dict, _tts: Callable = tts_on_event) -> None:
+                self._handle_event(event)
+                _tts(event)
+
+            confirm_fn = self._make_confirm_fn() if self._agent.config["agent"]["confirm_tools"] else None
+            with self._agent_lock:
+                try:
+                    self._agent.run(text, on_event=combined_on_event, confirm_fn=confirm_fn)
+                except Exception as exc:
+                    self.call_from_thread(self._log, f"[error] {exc}")
+            self._set_speech_state("speaking")
+            self._pipeline.wait_for_tts()
+
+    def _set_speech_state(self, state: str) -> None:
+        self._speech_state = state
+        try:
+            self.call_from_thread(self._refresh_diagnostics)
+        except RuntimeError:
+            pass
+
+    def _extra_diagnostics_lines(self) -> list[str]:
+        return ["", f"Speech:   {self._speech_state}"]
+
+
 def run_tui(agent: Any) -> None:
     DebugApp(agent).run()
 
 
-__all__ = ["run_tui"]
+def run_speech_tui(agent: Any, pipeline: Any) -> None:
+    SpeechDebugApp(agent, pipeline).run()
+
+
+__all__ = ["run_tui", "run_speech_tui"]
