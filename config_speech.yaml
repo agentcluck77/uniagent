@@ -10,11 +10,11 @@ stt:
   backend: whisper.cpp
   model: tiny
   language: null
-  models_dir: null
+  models_dir: uniagent/models/whisper
 
 tts:
   backend: piper
-  model_path: .wnt-cache/piper/en_US-lessac-medium.onnx
+  model_path: uniagent/models/piper/en_US-lessac-medium.onnx
   voice: null
   speaking_rate: 1.0
 
