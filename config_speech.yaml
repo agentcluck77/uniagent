@@ -14,7 +14,7 @@ stt:
 
 tts:
   backend: piper
-  model_path: null
+  model_path: .wnt-cache/piper/en_US-lessac-medium.onnx
   voice: null
   speaking_rate: 1.0
 

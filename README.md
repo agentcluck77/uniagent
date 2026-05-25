@@ -79,7 +79,28 @@ Press `q` to quit.
 
 ## Speech
 
-Set `tts.model_path` in `config_speech.yaml` to a Piper `.onnx` voice model, then run:
+Download a Piper voice model (`en_US-lessac-medium` is a good default, ~60 MB):
+
+```bash
+mkdir -p models/piper
+curl -L -o models/piper/en_US-lessac-medium.onnx \
+  https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+curl -L -o models/piper/en_US-lessac-medium.onnx.json \
+  https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+```
+
+Set `tts.model_path` in `config_speech.yaml` to the downloaded `.onnx` file:
+
+```yaml
+tts:
+  backend: piper
+  model_path: models/piper/en_US-lessac-medium.onnx
+```
+
+Piper requires the `.onnx` and its matching `.onnx.json` in the same directory. Browse other voices
+at `https://huggingface.co/rhasspy/piper-voices`.
+
+Then run:
 
 ```bash
 .venv/bin/python examples/speech_basic.py
