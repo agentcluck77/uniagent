@@ -73,14 +73,11 @@ class AudioIO:
         return AudioBuffer(samples=samples, sample_rate=self.sample_rate)
 
     def play(self, audio: AudioBuffer) -> None:
-        import sounddevice as sd  # type: ignore[import-not-found]
-
         samples = self.apply_output_volume(audio.samples)
         already_playing = self._tts_playing.is_set()
         self._tts_playing.set()
         try:
-            sd.play(samples, samplerate=audio.sample_rate, device=self.config["output_device"])
-            sd.wait()
+            _paplay(samples, audio.sample_rate)
         finally:
             if not already_playing:
                 self._tts_playing.clear()
@@ -133,3 +130,13 @@ class AudioIO:
         envelope = np.linspace(1.0, 0.15, t.size, dtype=np.float32)
         samples = 0.18 * envelope * np.sin(2 * math.pi * frequency * t)
         return AudioBuffer(samples=samples.astype(np.float32), sample_rate=sample_rate)
+
+
+def _paplay(samples: Any, sample_rate: int) -> None:
+    import subprocess
+
+    subprocess.run(
+        ["paplay", "--raw", "--format=float32le", f"--rate={sample_rate}", "--channels=1"],
+        input=samples.astype("<f4").tobytes(),
+        check=True,
+    )
