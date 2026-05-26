@@ -162,6 +162,10 @@ class Agent:
 
             if scratchpad is not None:
                 _emit(on_event, {"type": "scratchpad", "state": dict(scratchpad)})
+            if self.config["agent"].get("stop_after_tool_calls"):
+                result = "Tool calls executed."
+                _emit(on_event, {"type": "assistant_text", "content": result})
+                break
         else:
             _emit(on_event, {"type": "assistant_text", "content": MAX_ITERATIONS_ERROR})
 
