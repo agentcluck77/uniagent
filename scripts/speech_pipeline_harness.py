@@ -6,10 +6,8 @@
 # This harness avoids live microphone input. It synthesizes typed text to audio,
 # runs that audio through the same VAD + STT path, then speaks the agent response.
 
-from speech_harness import SpeechTestHarness
-
 from uniagent import Agent, load_config, tool
-from uniagent.speech import SpeechPipeline, load_speech_config
+from uniagent.speech import SpeechPipeline, SpeechTestHarness, load_speech_config
 
 
 @tool(description="Multiply two integers")

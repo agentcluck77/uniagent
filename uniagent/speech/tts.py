@@ -12,6 +12,26 @@ from uniagent.speech.audio import AudioIO
 from uniagent.speech.errors import SpeechConfigurationError
 from uniagent.speech.types import AudioBuffer
 
+_MD_PATTERNS = [
+    (re.compile(r"```.*?```", re.DOTALL), ""),           # fenced code blocks
+    (re.compile(r"`(.+?)`"), r"\1"),                     # inline code
+    (re.compile(r"\*\*(.+?)\*\*", re.DOTALL), r"\1"),   # **bold**
+    (re.compile(r"\*(.+?)\*", re.DOTALL), r"\1"),        # *italic*
+    (re.compile(r"__(.+?)__", re.DOTALL), r"\1"),        # __bold__
+    (re.compile(r"_(.+?)_", re.DOTALL), r"\1"),          # _italic_
+    (re.compile(r"^#{1,6}\s+", re.MULTILINE), ""),       # # headers
+    (re.compile(r"\[(.+?)\]\(.+?\)", re.DOTALL), r"\1"), # [text](url)
+    (re.compile(r"^[-*+]\s+", re.MULTILINE), ""),        # - bullets
+    (re.compile(r"^\d+\.\s+", re.MULTILINE), ""),        # 1. numbered lists
+    (re.compile(r"^>\s+", re.MULTILINE), ""),            # > blockquotes
+]
+
+
+def _strip_markdown(text: str) -> str:
+    for pattern, replacement in _MD_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text.strip()
+
 
 class PiperTTS:
     def __init__(self, config: dict[str, Any]):
@@ -19,7 +39,7 @@ class PiperTTS:
         self._voice: Any = None
 
     def synthesize(self, text: str) -> AudioBuffer:
-        chunks = list(self.load().synthesize(text, syn_config=self._synthesis_config()))
+        chunks = list(self.load().synthesize(_strip_markdown(text), syn_config=self._synthesis_config()))
         if not chunks:
             return AudioBuffer(samples=np.zeros(0, dtype=np.float32), sample_rate=16000)
         sample_rate = chunks[0].sample_rate

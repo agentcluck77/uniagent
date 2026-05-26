@@ -3,6 +3,7 @@ from uniagent.speech.errors import (
     SpeechConfigurationError,
     SpeechError,
 )
+from uniagent.speech.harness import SpeechTestHarness
 from uniagent.speech.pipeline import SpeechPipeline, make_confirm_fn
 from uniagent.speech.types import AudioBuffer
 
@@ -12,6 +13,7 @@ __all__ = [
     "SpeechConfigurationError",
     "SpeechError",
     "SpeechPipeline",
+    "SpeechTestHarness",
     "load_speech_config",
     "make_confirm_fn",
 ]

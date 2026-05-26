@@ -30,7 +30,10 @@ class AudioIO:
 
         def callback(indata: Any, frames: int, time_info: Any, status: Any) -> None:
             del frames, time_info
-            audio_queue.put(RuntimeError(str(status)) if status else indata.copy())
+            if status and not status.input_overflow:
+                audio_queue.put(RuntimeError(str(status)))
+            else:
+                audio_queue.put(indata.copy())
 
         block_size = 512 if self.sample_rate == 16000 else 256
         max_seconds = float(vad.config["max_recording_s"])

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import numpy as np
@@ -12,6 +13,7 @@ class WhisperSTT:
     def __init__(self, config: dict[str, Any]):
         self.config = config
         self._model: Any = None
+        self._lock = threading.Lock()
 
     def transcribe(self, audio: AudioBuffer) -> str:
         samples = np.asarray(audio.samples, dtype=np.float32)
@@ -23,7 +25,8 @@ class WhisperSTT:
         kwargs: dict[str, Any] = {}
         if self.config["language"]:
             kwargs["language"] = self.config["language"]
-        segments = self.load().transcribe(samples, **kwargs)
+        with self._lock:
+            segments = self.load().transcribe(samples, **kwargs)
         return " ".join(str(getattr(segment, "text", "")).strip() for segment in segments).strip()
 
     def load(self) -> Any:

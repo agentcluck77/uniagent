@@ -14,7 +14,13 @@ model:
 agent:
   max_iterations: 10       # hard cap on think->act cycles per run
   system_prompt: "You are a helpful assistant."
-  confirm_tools: false    # set true to require human approval before each tool call
+  confirm_tools: false     # set true to require human approval before each tool call
+  history_turns: null      # persistent conversation history across run() calls
+                           # null  — disabled (each run() starts fresh, no memory between turns)
+                           # 0     — enabled, unbounded (keep full history for the session)
+                           # N     — enabled, keep last N turns (recommended: 10–20 for small models)
+                           # Note: state injection (Option A) is always active when a state_fn is
+                           # passed to Agent() or Agent.from_config() — no YAML key required.
 
 toolrag:
   enabled: true

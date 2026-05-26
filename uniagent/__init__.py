@@ -26,6 +26,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "confirm_tools": False,
         "retry_invalid_tool_calls": False,
         "max_tool_call_retries": 1,
+        "history_turns": None,
     },
     "toolrag": {
         "enabled": True,

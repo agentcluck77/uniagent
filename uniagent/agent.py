@@ -31,15 +31,24 @@ class Agent:
         backend: Any,
         tools: list[Callable],
         toolrag: ToolRAG | None = None,
+        state_fn: Callable[[], str] | None = None,
     ):
         self.config = config
         self.backend = backend
         self.tools = self._eligible_tools(config, tools)
         self.toolrag = toolrag
+        self.state_fn = state_fn
         self._tool_map = {fn.__name__: fn for fn in self.tools}
+        self._history: list[list[dict]] = []
 
     @classmethod
-    def from_config(cls, config: dict, tools: list[Callable]) -> "Agent":
+    def from_config(
+        cls,
+        config: dict,
+        tools: list[Callable],
+        *,
+        state_fn: Callable[[], str] | None = None,
+    ) -> "Agent":
         backend = backend_from_config(config)
         tools = cls._eligible_tools(config, tools)
         toolrag = None
@@ -49,7 +58,10 @@ class Agent:
                 backend=config["toolrag"]["backend"],
                 st_model=config["toolrag"]["st_model"],
             )
-        return cls(config=config, backend=backend, tools=tools, toolrag=toolrag)
+        return cls(config=config, backend=backend, tools=tools, toolrag=toolrag, state_fn=state_fn)
+
+    def clear_history(self) -> None:
+        self._history.clear()
 
     def run(
         self,
@@ -57,13 +69,20 @@ class Agent:
         on_event: Callable[[dict], None] | None = None,
         confirm_fn: Callable[[str], str] | None = None,
     ) -> str:
-        scratchpad = {} if self.config["scratchpad"]["enabled"] else None
-        history = [{"role": "system", "content": self.config["agent"]["system_prompt"]}]
-        history.append({"role": "user", "content": user_message})
+        history_turns = self.config["agent"].get("history_turns")
+        prefix = self._slice_history(history_turns)
+        history: list[dict] = (
+            [{"role": "system", "content": self._build_system_prompt()}]
+            + prefix
+            + [{"role": "user", "content": user_message}]
+        )
+        prefix_len = len(prefix)
 
-        iteration = 0
+        scratchpad = {} if self.config["scratchpad"]["enabled"] else None
         session_tool_calls = 0
         invalid_tool_call_retries = 0
+        result = MAX_ITERATIONS_ERROR
+
         for iteration in range(self.config["agent"]["max_iterations"]):
             active_tools = self._active_tools(history)
             tool_schemas = [fn._schema for fn in active_tools]
@@ -89,11 +108,13 @@ class Agent:
 
             if not response.get("tool_calls"):
                 content = response.get("content") or ""
+                history.append({"role": "assistant", "content": content})
                 if response.get("_streamed_tokens", False):
                     _emit(on_event, {"type": "token", "content": "\n", "tok_per_sec": 0.0})
                 else:
                     _emit(on_event, {"type": "assistant_text", "content": content})
-                return content
+                result = content
+                break
 
             validation_errors = tool_call_batch_errors(
                 response["tool_calls"],
@@ -125,7 +146,8 @@ class Agent:
                     continue
                 message = "Error: invalid tool call batch: " + "; ".join(validation_errors)
                 _emit(on_event, {"type": "assistant_text", "content": message})
-                return message
+                result = message
+                break
 
             history.append(self._assistant_history_message(response))
             results = [
@@ -140,9 +162,27 @@ class Agent:
 
             if scratchpad is not None:
                 _emit(on_event, {"type": "scratchpad", "state": dict(scratchpad)})
+        else:
+            _emit(on_event, {"type": "assistant_text", "content": MAX_ITERATIONS_ERROR})
 
-        _emit(on_event, {"type": "assistant_text", "content": MAX_ITERATIONS_ERROR})
-        return MAX_ITERATIONS_ERROR
+        if history_turns is not None:
+            self._history.append(history[1 + prefix_len :])
+
+        return result
+
+    def _build_system_prompt(self) -> str:
+        base = self.config["agent"]["system_prompt"]
+        if self.state_fn is not None:
+            state_str = self.state_fn()
+            if state_str:
+                return f"{base}\n\n{state_str}"
+        return base
+
+    def _slice_history(self, history_turns: int | None) -> list[dict]:
+        if history_turns is None or not self._history:
+            return []
+        turns = self._history if history_turns == 0 else self._history[-history_turns:]
+        return [msg for turn in turns for msg in turn]
 
     def _complete(
         self,
@@ -260,7 +300,7 @@ class Agent:
         return self.toolrag.retrieve(query, top_k)
 
     def _prompt_system(self, tool_schemas: list[dict]) -> str:
-        base = self.config["agent"]["system_prompt"]
+        base = self._build_system_prompt()
         if self.config["model"]["tool_mode"] == "lfm":
             tools_json = json.dumps(
                 [schema["function"] for schema in tool_schemas],

@@ -214,14 +214,29 @@ class DebugApp(App):
 
 
 class SpeechDebugApp(DebugApp):
+    BINDINGS = DebugApp.BINDINGS + [("ctrl+s", "toggle_sim", "Sim input")]
+
     def __init__(self, agent: Any, pipeline: Any):
         super().__init__(agent)
         self._pipeline = pipeline
         self._speech_state = "starting"
+        self._sim_mode = False
+        self._harness: Any = None
 
     def on_mount(self) -> None:
         super().on_mount()
         threading.Thread(target=self._speech_loop, daemon=True).start()
+
+    def action_toggle_sim(self) -> None:
+        self._sim_mode = not self._sim_mode
+        self._log(f"[sim] TTS→STT input {'ON' if self._sim_mode else 'OFF'} (Ctrl+S to toggle)")
+        self._refresh_diagnostics()
+
+    def _get_harness(self) -> Any:
+        if self._harness is None:
+            from uniagent.speech import SpeechTestHarness
+            self._harness = SpeechTestHarness(self._pipeline)
+        return self._harness
 
     def _speech_loop(self) -> None:
         _last_exc_str = ""
@@ -261,6 +276,18 @@ class SpeechDebugApp(DebugApp):
         confirm_fn = self._make_confirm_fn() if self._agent.config["agent"]["confirm_tools"] else None
         tts_on_event = self._pipeline.make_on_event()
 
+        if self._sim_mode:
+            harness = self._get_harness()
+            try:
+                input_audio = harness.synthesize_input(message)
+                harness.play_audio(input_audio)
+                transcript = harness.transcribe_audio(input_audio, play_chime=False)
+            except Exception as exc:
+                self.call_from_thread(self._log, f"[sim error] {exc}")
+                return
+            self.call_from_thread(self._log, f"[stt] {transcript}")
+            message = transcript
+
         def combined_on_event(event: dict, _tts: Callable = tts_on_event) -> None:
             self._handle_event(event)
             _tts(event)
@@ -280,7 +307,8 @@ class SpeechDebugApp(DebugApp):
             pass
 
     def _extra_diagnostics_lines(self) -> list[str]:
-        return ["", f"Speech:   {self._speech_state}"]
+        sim_str = "ON" if self._sim_mode else "off"
+        return ["", f"Speech:   {self._speech_state}", f"Sim:      {sim_str} (Ctrl+S)"]
 
 
 def run_tui(agent: Any) -> None:
