@@ -1,7 +1,8 @@
-# Requires Ollama running locally: ollama run gemma4:e2b
 # Requires speech extra: uv pip install -e ".[speech]"
-# Agent/model settings come from ../wnt/agents/config_agent_speech.yaml.
+# Pass --config for agent/model settings (e.g. wnt/agents/configs/gemma4_e2b_wnt_v6_q4km.yaml).
 # Requires config_speech.yaml tts.model_path to point at a Piper .onnx voice.
+
+import argparse
 
 from uniagent import Agent, load_config, tool
 from uniagent.speech import SpeechPipeline, load_speech_config, make_confirm_fn
@@ -13,8 +14,13 @@ def multiply(a: int, b: int) -> str:
 
 
 def main() -> None:
-    config = load_config("../wnt/agents/config_agent_speech.yaml")
-    speech_config = load_speech_config("config_speech.yaml")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True, help="Agent/model config YAML")
+    parser.add_argument("--speech-config", default="config_speech.yaml", help="Speech config YAML")
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    speech_config = load_speech_config(args.speech_config)
     agent = Agent.from_config(config, tools=[multiply])
 
     with SpeechPipeline(speech_config) as pipeline:
