@@ -50,6 +50,7 @@ class DebugApp(App):
         self._last_stats: dict | None = None
 
     def on_mount(self) -> None:
+        self.query_one("#input", Input).focus()
         self._refresh_diagnostics()
 
     def on_unmount(self) -> None:

@@ -58,7 +58,7 @@ def tool(description: str, schema: dict[str, Any] | None = None):
         hints = get_type_hints(fn)
         fn._description = description
         fn._schema = schema if schema is not None else _build_schema(fn, description)
-        fn._needs_scratchpad = hints.get("scratchpad") is dict
+        fn._needs_scratchpad = hints.get("scratchpad") == dict
         return fn
 
     return decorate

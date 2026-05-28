@@ -41,7 +41,9 @@ def validate_tool_call(
         return ToolCallValidation(tool_call_id, "<missing>", {}, ["missing function"], None)
 
     name = str(function.get("name") or "")
-    raw_arguments = function.get("arguments") or "{}"
+    raw_arguments = function.get("arguments", "{}")
+    if raw_arguments is None:
+        raw_arguments = "{}"
     args: dict[str, Any] = {}
     errors: list[str] = []
     try:

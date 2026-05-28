@@ -4,7 +4,6 @@ from typing import Any
 
 import yaml
 
-from uniagent.agent import Agent
 from uniagent.tool import tool
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -58,6 +57,14 @@ def load_config(path: str) -> dict[str, Any]:
     if not isinstance(loaded, dict):
         raise ValueError("config file must contain a YAML mapping")
     return _deep_merge(DEFAULT_CONFIG, loaded)
+
+
+def __getattr__(name: str) -> Any:
+    if name == "Agent":
+        from uniagent.agent import Agent
+
+        return Agent
+    raise AttributeError(name)
 
 
 __all__ = ["Agent", "tool", "load_config"]

@@ -111,6 +111,7 @@ def backend_from_config(config: dict) -> OpenAICompatibleBackend:
     backend = model["backend"]
     api_key = model.get("api_key")
     if api_key is None and backend in {"ollama", "llamacpp"}:
+        # OpenAI-compatible local servers require a non-empty API key value but do not verify it.
         api_key = backend
     if api_key is None:
         api_key = os.environ.get("OPENAI_API_KEY")

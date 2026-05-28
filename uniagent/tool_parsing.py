@@ -163,7 +163,8 @@ def _parse_lfm_tool_calls(content: str) -> list[dict[str, Any]]:
                         },
                     }
                 )
-        except Exception:
+        except (SyntaxError, ValueError, TypeError):
+            # Ignore malformed LFM fragments and keep scanning for valid tool calls.
             continue
     return calls
 

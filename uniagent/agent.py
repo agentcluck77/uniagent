@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -14,6 +15,7 @@ from uniagent.toolrag import ToolRAG
 MAX_ITERATIONS_ERROR = (
     "Error: maximum agent iterations reached before a final response was produced."
 )
+LOGGER = logging.getLogger(__name__)
 
 
 def _emit(on_event: Callable[[dict], None] | None, event: dict) -> None:
@@ -21,7 +23,7 @@ def _emit(on_event: Callable[[dict], None] | None, event: dict) -> None:
         try:
             on_event(event)
         except Exception:
-            pass
+            LOGGER.exception("agent event callback failed")
 
 
 class Agent:
@@ -231,7 +233,7 @@ class Agent:
         content = raw.get("content") or ""
         calls = self._parse_prompt_tool_calls(content)
 
-        if calls is None:
+        if not calls:
             streamed_tokens = False
             if stream and token_buf:
                 for tok in token_buf:
@@ -330,7 +332,7 @@ class Agent:
 
     def _parse_prompt_tool_calls(self, content: str) -> list[dict] | None:
         calls = parse_tool_calls(content, self.config["model"]["tool_mode"])
-        return calls or None
+        return calls
 
     @staticmethod
     def _eligible_tools(config: dict, tools: list[Callable]) -> list[Callable]:
@@ -393,7 +395,8 @@ class Agent:
         if validation.errors:
             return finish("Error: " + "; ".join(validation.errors))
         fn = validation.fn
-        assert fn is not None
+        if fn is None:
+            return finish("Error: missing tool implementation")
 
         if confirm_fn is not None and self.config["agent"]["confirm_tools"]:
             args_str = ", ".join(f"{k}={v}" for k, v in validation.args.items())
