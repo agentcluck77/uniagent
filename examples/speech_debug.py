@@ -1,5 +1,5 @@
 # Requires speech extra: uv pip install -e ".[speech]"
-# Pass --config for agent/model settings (e.g. wnt/agents/configs/gemma4_e2b_wnt_v6_q4km.yaml).
+# Pass --config for agent/model settings (e.g. uniagent/config.yaml).
 # Requires config_speech.yaml tts.model_path to point at a Piper .onnx voice.
 
 import argparse
