@@ -230,12 +230,13 @@ class SpeechDebugApp(DebugApp):
 
     def action_toggle_sim(self) -> None:
         self._sim_mode = not self._sim_mode
-        self._log(f"[sim] TTS→STT input {'ON' if self._sim_mode else 'OFF'} (Ctrl+S to toggle)")
+        self._log(f"[sim] TTS->STT input {'ON' if self._sim_mode else 'OFF'} (Ctrl+S to toggle)")
         self._refresh_diagnostics()
 
     def _get_harness(self) -> Any:
         if self._harness is None:
             from uniagent.speech import SpeechTestHarness
+
             self._harness = SpeechTestHarness(self._pipeline)
         return self._harness
 
@@ -257,16 +258,14 @@ class SpeechDebugApp(DebugApp):
                 continue
             self.call_from_thread(self._log, f"[user] {text}")
             self._set_speech_state("agent running")
-            tts_on_event = self._pipeline.make_on_event()
-
-            def combined_on_event(event: dict, _tts: Callable = tts_on_event) -> None:
-                self._handle_event(event)
-                _tts(event)
-
             confirm_fn = self._make_confirm_fn() if self._agent.config["agent"]["confirm_tools"] else None
             with self._agent_lock:
                 try:
-                    self._agent.run(text, on_event=combined_on_event, confirm_fn=confirm_fn)
+                    self._agent.run(
+                        text,
+                        on_event=self._speech_on_event(),
+                        confirm_fn=confirm_fn,
+                    )
                 except Exception as exc:
                     self.call_from_thread(self._log, f"[error] {exc}")
             self._set_speech_state("speaking")
@@ -275,8 +274,6 @@ class SpeechDebugApp(DebugApp):
     @work(thread=True)
     def _run_agent(self, message: str) -> None:
         confirm_fn = self._make_confirm_fn() if self._agent.config["agent"]["confirm_tools"] else None
-        tts_on_event = self._pipeline.make_on_event()
-
         if self._sim_mode:
             harness = self._get_harness()
             try:
@@ -289,16 +286,21 @@ class SpeechDebugApp(DebugApp):
             self.call_from_thread(self._log, f"[stt] {transcript}")
             message = transcript
 
+        with self._agent_lock:
+            try:
+                self._agent.run(message, on_event=self._speech_on_event(), confirm_fn=confirm_fn)
+            except Exception as exc:
+                self.call_from_thread(self._log, f"[error] {exc}")
+        self._pipeline.wait_for_tts()
+
+    def _speech_on_event(self) -> Callable[[dict], None]:
+        tts_on_event = self._pipeline.make_on_event()
+
         def combined_on_event(event: dict, _tts: Callable = tts_on_event) -> None:
             self._handle_event(event)
             _tts(event)
 
-        with self._agent_lock:
-            try:
-                self._agent.run(message, on_event=combined_on_event, confirm_fn=confirm_fn)
-            except Exception as exc:
-                self.call_from_thread(self._log, f"[error] {exc}")
-        self._pipeline.wait_for_tts()
+        return combined_on_event
 
     def _set_speech_state(self, state: str) -> None:
         self._speech_state = state

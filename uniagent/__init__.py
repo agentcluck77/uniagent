@@ -23,6 +23,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_iterations": 10,
         "system_prompt": "You are a helpful assistant.",
         "confirm_tools": False,
+        "stop_after_tool_calls": False,
+        "tool_call_confirmation": "Tool calls executed.",
         "retry_invalid_tool_calls": False,
         "max_tool_call_retries": 1,
         "history_turns": None,

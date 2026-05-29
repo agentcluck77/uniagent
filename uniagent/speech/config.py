@@ -27,7 +27,6 @@ DEFAULT_SPEECH_CONFIG: dict[str, Any] = {
     },
     "audio": {
         "input_device": None,
-        "output_device": None,
         "output_volume": 1.0,
     },
     "chime": {

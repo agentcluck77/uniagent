@@ -15,6 +15,10 @@ agent:
   max_iterations: 10       # hard cap on think->act cycles per run
   system_prompt: "You are a helpful assistant."
   confirm_tools: false     # set true to require human approval before each tool call
+  stop_after_tool_calls: false
+  tool_call_confirmation: "Tool calls executed."
+  retry_invalid_tool_calls: false
+  max_tool_call_retries: 1
   history_turns: null      # persistent conversation history across run() calls
                            # null  — disabled (each run() starts fresh, no memory between turns)
                            # 0     — enabled, unbounded (keep full history for the session)

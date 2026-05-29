@@ -69,10 +69,8 @@ Run the included example:
 
 ## Debug TUI
 
-```python
-from uniagent.tui import run_tui
-
-run_tui(agent)
+```bash
+.venv/bin/python examples/basic.py --tui
 ```
 
 Press `q` to quit.
@@ -102,14 +100,20 @@ matching `.onnx.json` in the same directory. Browse other voices at
 Then run:
 
 ```bash
-.venv/bin/python examples/speech_basic.py
+.venv/bin/python examples/speech_basic.py --config config.yaml
+```
+
+Run the speech TUI:
+
+```bash
+.venv/bin/python examples/speech_debug.py --config config.yaml
 ```
 
 To test the speech stack without a live microphone, use the typed-input harness:
 
 ```bash
-.venv/bin/python scripts/speech_pipeline_harness.py
+.venv/bin/python scripts/speech_pipeline_harness.py --config config.yaml
 ```
 
-That harness loads WNT agent/model settings from `../wnt/agents/config_agent_speech.yaml` and
-speech-device settings from `config_speech.yaml`, so it can test the same WNT model through STT/TTS.
+The harness uses the same speech-device settings as live speech, but synthesizes typed input before
+passing it through VAD, STT, the agent, and TTS.
