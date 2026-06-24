@@ -40,6 +40,14 @@ class SpeechPipeline:
         self.output.play_chime("start")
         return self.stt.transcribe(self.audio.prepare_input(audio)).strip()
 
+    def listen_ptt(self, stop_event: threading.Event) -> str:
+        audio = self.audio.record_until(stop_event)
+        self.output.play_chime("start")
+        return self.stt.transcribe(self.audio.prepare_input(audio)).strip()
+
+    def cancel_tts(self) -> None:
+        self.output.cancel()
+
     def speak(self, text: str) -> None:
         self.output.speak(text)
 

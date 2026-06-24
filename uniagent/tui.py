@@ -74,11 +74,45 @@ class DebugApp(App):
         event.input.clear()
         if not message:
             return
+        if message.startswith("/"):
+            if self._confirm_pending:
+                self._log("[error] Cannot run a command while waiting for confirmation")
+                return
+            self._handle_slash_command(message)
+            return
         if self._confirm_pending:
             self._resolve_confirmation(message)
             return
         self._log(f"[user] {message}")
         self._run_agent(message)
+
+    def _handle_slash_command(self, command: str) -> None:
+        if command == "/clear":
+            self._do_clear(full=True)
+        elif command == "/clearchat":
+            self._do_clear(full=False)
+        else:
+            self._log(f"[error] Unknown command: {command}")
+
+    @work(thread=True)
+    def _do_clear(self, full: bool) -> None:
+        with self._agent_lock:
+            self._agent.clear_history()
+            if full:
+                if hasattr(self._agent, "clear_state"):
+                    self._agent.clear_state()
+                self.call_from_thread(self._reset_session_stats)
+            else:
+                self.call_from_thread(self.query_one("#history", Log).clear)
+
+    def _reset_session_stats(self) -> None:
+        self._session_tokens = 0
+        self._session_latency_ms = 0.0
+        self._session_tool_calls = 0
+        self._last_stats = None
+        self.query_one("#history", Log).clear()
+        self.query_one("#scratchpad", Static).update("Scratchpad\n(empty)")
+        self._refresh_diagnostics()
 
     @work(thread=True)
     def _run_agent(self, message: str) -> None:
@@ -215,23 +249,80 @@ class DebugApp(App):
 
 
 class SpeechDebugApp(DebugApp):
-    BINDINGS = DebugApp.BINDINGS + [("ctrl+s", "toggle_sim", "Sim input")]
+    BINDINGS = DebugApp.BINDINGS + [("ctrl+s", "cycle_mode", "Cycle input mode")]
 
     def __init__(self, agent: Any, pipeline: Any):
         super().__init__(agent)
         self._pipeline = pipeline
-        self._speech_state = "starting"
-        self._sim_mode = False
+        self._mode = "text"
+        self._speech_state = "idle"
+        self._recording = False
+        self._ptt_stop_event: threading.Event | None = None
         self._harness: Any = None
 
     def on_mount(self) -> None:
         super().on_mount()
-        threading.Thread(target=self._speech_loop, daemon=True).start()
 
-    def action_toggle_sim(self) -> None:
-        self._sim_mode = not self._sim_mode
-        self._log(f"[sim] TTS->STT input {'ON' if self._sim_mode else 'OFF'} (Ctrl+S to toggle)")
+    def action_cycle_mode(self) -> None:
+        _MODES = ("text", "speech", "sim")
+        self._mode = _MODES[(_MODES.index(self._mode) + 1) % 3]
+        self._log(f"[mode] {self._mode} (Ctrl+S)")
+        self._apply_mode()
         self._refresh_diagnostics()
+
+    def _apply_mode(self) -> None:
+        inp = self.query_one("#input", Input)
+        if self._mode == "speech":
+            inp.disabled = True
+            inp.placeholder = f"speech — {self._speech_state}"
+        else:
+            inp.disabled = False
+            inp.placeholder = "Message..."
+            inp.focus()
+
+    def key_space(self) -> None:
+        if self._mode == "speech":
+            self._handle_ptt_toggle()
+
+    def _handle_ptt_toggle(self) -> None:
+        if self._speech_state == "recording":
+            if self._ptt_stop_event is not None:
+                self._ptt_stop_event.clear()
+            self._set_speech_state("responding")
+        elif self._speech_state == "speaking":
+            self._pipeline.cancel_tts()
+            self._start_ptt()
+        elif self._speech_state == "idle":
+            self._start_ptt()
+
+    def _start_ptt(self) -> None:
+        stop_event = threading.Event()
+        stop_event.set()
+        self._ptt_stop_event = stop_event
+        self._set_speech_state("recording")
+        threading.Thread(target=self._ptt_loop, args=(stop_event,), daemon=True).start()
+
+    def _ptt_loop(self, stop_event: threading.Event) -> None:
+        try:
+            text = self._pipeline.listen_ptt(stop_event)
+        except Exception as exc:
+            self.call_from_thread(self._log, f"[speech error] {exc}")
+            self._set_speech_state("idle")
+            return
+        if not text:
+            self._set_speech_state("idle")
+            return
+        self.call_from_thread(self._log, f"[user] {text}")
+        self._set_speech_state("responding")
+        confirm_fn = self._make_confirm_fn() if self._agent.config["agent"]["confirm_tools"] else None
+        with self._agent_lock:
+            try:
+                self._agent.run(text, on_event=self._speech_on_event(), confirm_fn=confirm_fn)
+            except Exception as exc:
+                self.call_from_thread(self._log, f"[error] {exc}")
+        self._set_speech_state("speaking")
+        self._pipeline.wait_for_tts()
+        self._set_speech_state("idle")
 
     def _get_harness(self) -> Any:
         if self._harness is None:
@@ -240,41 +331,10 @@ class SpeechDebugApp(DebugApp):
             self._harness = SpeechTestHarness(self._pipeline)
         return self._harness
 
-    def _speech_loop(self) -> None:
-        _last_exc_str = ""
-        while True:
-            self._set_speech_state("listening")
-            try:
-                text = self._pipeline.listen()
-                _last_exc_str = ""
-            except Exception as exc:
-                exc_str = str(exc)
-                if exc_str != _last_exc_str:
-                    self.call_from_thread(self._log, f"[speech error] {exc_str}")
-                    _last_exc_str = exc_str
-                threading.Event().wait(2.0)
-                continue
-            if not text:
-                continue
-            self.call_from_thread(self._log, f"[user] {text}")
-            self._set_speech_state("agent running")
-            confirm_fn = self._make_confirm_fn() if self._agent.config["agent"]["confirm_tools"] else None
-            with self._agent_lock:
-                try:
-                    self._agent.run(
-                        text,
-                        on_event=self._speech_on_event(),
-                        confirm_fn=confirm_fn,
-                    )
-                except Exception as exc:
-                    self.call_from_thread(self._log, f"[error] {exc}")
-            self._set_speech_state("speaking")
-            self._pipeline.wait_for_tts()
-
     @work(thread=True)
     def _run_agent(self, message: str) -> None:
         confirm_fn = self._make_confirm_fn() if self._agent.config["agent"]["confirm_tools"] else None
-        if self._sim_mode:
+        if self._mode == "sim":
             harness = self._get_harness()
             try:
                 input_audio = harness.synthesize_input(message)
@@ -305,13 +365,20 @@ class SpeechDebugApp(DebugApp):
     def _set_speech_state(self, state: str) -> None:
         self._speech_state = state
         try:
-            self.call_from_thread(self._refresh_diagnostics)
+            self.call_from_thread(self._refresh_speech_ui)
         except RuntimeError:
-            pass
+            self._refresh_speech_ui()
+
+    def _refresh_speech_ui(self) -> None:
+        self._refresh_diagnostics()
+        if self._mode == "speech":
+            self.query_one("#input", Input).placeholder = f"speech — {self._speech_state}"
 
     def _extra_diagnostics_lines(self) -> list[str]:
-        sim_str = "ON" if self._sim_mode else "off"
-        return ["", f"Speech:   {self._speech_state}", f"Sim:      {sim_str} (Ctrl+S)"]
+        lines = ["", f"Mode:     {self._mode} (Ctrl+S)"]
+        if self._mode == "speech":
+            lines.append(f"State:    {self._speech_state}")
+        return lines
 
 
 def run_tui(agent: Any) -> None:

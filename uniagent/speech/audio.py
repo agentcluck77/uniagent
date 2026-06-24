@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import queue
+import subprocess
 import time
 from collections import deque
 from threading import Event
@@ -18,6 +19,7 @@ class AudioIO:
         self.config = config
         self.sample_rate = sample_rate
         self._tts_playing = tts_playing
+        self._play_proc: subprocess.Popen | None = None
 
     def record_utterance(self, vad: Any) -> AudioBuffer:
         if not vad.enabled:
@@ -80,10 +82,57 @@ class AudioIO:
         already_playing = self._tts_playing.is_set()
         self._tts_playing.set()
         try:
-            _paplay(samples, audio.sample_rate)
+            self._paplay(samples, audio.sample_rate)
         finally:
             if not already_playing:
                 self._tts_playing.clear()
+
+    def cancel_play(self) -> None:
+        proc = self._play_proc
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        self._tts_playing.clear()
+
+    def record_until(self, stop_event: Event) -> AudioBuffer:
+        import sounddevice as sd  # type: ignore[import-not-found]
+
+        audio_queue: queue.Queue[Any] = queue.Queue()
+
+        def callback(indata: Any, frames: int, time_info: Any, status: Any) -> None:
+            del frames, time_info
+            if status and not status.input_overflow:
+                audio_queue.put(RuntimeError(str(status)))
+            else:
+                audio_queue.put(indata.copy())
+
+        block_size = 512 if self.sample_rate == 16000 else 256
+        recorded: list[Any] = []
+
+        with sd.InputStream(
+            samplerate=self.sample_rate,
+            blocksize=block_size,
+            channels=1,
+            dtype="float32",
+            device=self.config["input_device"],
+            callback=callback,
+        ):
+            while stop_event.is_set():
+                try:
+                    chunk = audio_queue.get(timeout=0.05)
+                except queue.Empty:
+                    continue
+                if isinstance(chunk, BaseException):
+                    raise SpeechError(f"audio input failed: {chunk}") from chunk
+                if self._tts_playing.is_set():
+                    continue
+                recorded.append(self.as_float32_mono(chunk))
+
+        samples = np.concatenate(recorded) if recorded else np.zeros(0, dtype=np.float32)
+        return AudioBuffer(samples=samples, sample_rate=self.sample_rate)
 
     def prepare_input(self, audio: AudioBuffer | Any) -> AudioBuffer:
         if isinstance(audio, AudioBuffer):
@@ -135,11 +184,15 @@ class AudioIO:
         return AudioBuffer(samples=samples.astype(np.float32), sample_rate=sample_rate)
 
 
-def _paplay(samples: Any, sample_rate: int) -> None:
-    import subprocess
-
-    subprocess.run(
-        ["paplay", "--raw", "--format=float32le", f"--rate={sample_rate}", "--channels=1"],
-        input=samples.astype("<f4").tobytes(),
-        check=True,
-    )
+    def _paplay(self, samples: Any, sample_rate: int) -> None:
+        proc = subprocess.Popen(
+            ["paplay", "--raw", "--format=float32le", f"--rate={sample_rate}", "--channels=1"],
+            stdin=subprocess.PIPE,
+        )
+        self._play_proc = proc
+        try:
+            proc.communicate(input=samples.astype("<f4").tobytes())
+        except BrokenPipeError:
+            pass
+        finally:
+            self._play_proc = None

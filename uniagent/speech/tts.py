@@ -150,6 +150,15 @@ class SpeechOutput:
     def wait(self) -> None:
         self._queue.join()
 
+    def cancel(self) -> None:
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+                self._queue.task_done()
+            except queue.Empty:
+                break
+        self.audio.cancel_play()
+
     def close(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             self._queue.put(("stop", None, None))
