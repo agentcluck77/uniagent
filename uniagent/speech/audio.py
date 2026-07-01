@@ -21,7 +21,9 @@ class AudioIO:
         self._tts_playing = tts_playing
         self._play_proc: subprocess.Popen | None = None
 
-    def record_utterance(self, vad: Any) -> AudioBuffer:
+    def record_utterance(
+        self, vad: Any, abort_event: Event | None = None
+    ) -> AudioBuffer:
         if not vad.enabled:
             raise SpeechError("VAD must be enabled for live speech recording.")
 
@@ -52,7 +54,12 @@ class AudioIO:
             callback=callback,
         ):
             while True:
-                chunk = audio_queue.get()
+                if abort_event is not None and abort_event.is_set():
+                    break
+                try:
+                    chunk = audio_queue.get(timeout=0.05)
+                except queue.Empty:
+                    continue
                 if isinstance(chunk, BaseException):
                     raise SpeechError(f"audio input failed: {chunk}") from chunk
                 if self._tts_playing.is_set():

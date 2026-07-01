@@ -22,6 +22,7 @@ tui = [
 ]
 speech = [
   "pywhispercpp",
+  "moonshine-voice",
   "silero-vad",
   "piper-tts",
   "sounddevice",

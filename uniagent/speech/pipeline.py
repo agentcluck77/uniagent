@@ -6,7 +6,7 @@ from typing import Any
 
 from uniagent.speech.audio import AudioIO
 from uniagent.speech.config import DEFAULT_SPEECH_CONFIG, deep_merge
-from uniagent.speech.stt import WhisperSTT
+from uniagent.speech.stt import make_stt
 from uniagent.speech.tts import PiperTTS, SpeechOutput
 from uniagent.speech.vad import SileroVAD
 
@@ -26,7 +26,7 @@ class SpeechPipeline:
         self._tts_playing = threading.Event()
         self.vad = SileroVAD(self.config["vad"], self.sample_rate)
         self.audio = AudioIO(self.config["audio"], self.sample_rate, self._tts_playing)
-        self.stt = WhisperSTT(self.config["stt"])
+        self.stt = make_stt(self.config["stt"])
         self.tts = PiperTTS(self.config["tts"])
         self.output = SpeechOutput(
             tts=self.tts,
@@ -35,8 +35,8 @@ class SpeechPipeline:
             tts_playing=self._tts_playing,
         )
 
-    def listen(self) -> str:
-        audio = self.audio.record_utterance(self.vad)
+    def listen(self, abort_event: threading.Event | None = None) -> str:
+        audio = self.audio.record_utterance(self.vad, abort_event=abort_event)
         self.output.play_chime("start")
         return self.stt.transcribe(self.audio.prepare_input(audio)).strip()
 
